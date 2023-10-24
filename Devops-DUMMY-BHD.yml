@@ -1,0 +1,139 @@
+# ASP.NET
+# Build and test ASP.NET projects.
+# Add steps that publish symbols, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/aspnet/build-aspnet-4
+
+trigger:
+- main
+variables:
+  BuildConfiguration: 'Release'
+  BuildSolution: 'aspnetapp.sln'
+  BuildDocker: 'aspnetapp/Dockerfile'
+
+jobs:
+- job: Creacion_Imagen
+  displayName: 'Compilación de Imagenes'
+  pool:
+    name: DUMMY-SERVER
+    demands:
+    - agent.name -equals DUMMY-SERVER-DEVOPS
+
+  steps:
+  - task: SonarQubePrepare@5
+    displayName: 'Prepare analysis on SonarQubes'
+    inputs:
+      SonarQube: 'DummyBHD'
+      scannerMode: 'MSBuild'
+      projectKey: 'DummyBHD'
+      projectName: 'DummyBHD'
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet restore'
+    inputs:
+      command: 'restore'
+      projects: $(BuildSolution)
+      feedsToUse: 'select'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet build'
+    inputs:
+      command: 'build'
+      projects: $(BuildSolution)
+      arguments: '--configuration $(BuildConfiguration)'
+     
+  - task: DotNetCoreCLI@2
+    displayName: 'dotnet publish'
+    inputs:
+      command: 'publish'
+      publishWebProjects: false
+      projects: $(BuildSolution)
+      arguments: '--configuration $(BuildConfiguration) --output $(build.artifactstagingdirectory)'
+      zipAfterPublish: false
+
+  - task: SonarQubeAnalyze@5
+    displayName: 'Run Code Analysis'
+    inputs:
+      jdkversion: 'JAVA_HOME'
+  - task: SonarQubePublish@5
+    displayName: 'Publish Quality Gate Result'
+    inputs:
+      pollingTimeoutSec: '300'
+
+  - task: Docker@2
+    displayName: 'buildAndPush Container Registry'
+    inputs:
+      containerRegistry: 'ContenedoresDocker'
+      repository: 'bhdcontkube'
+      command: 'buildAndPush'
+      Dockerfile: '$(BuildDocker)'
+
+  - task: Docker@2
+    displayName: 'buildAndPush DockerHub'
+    inputs:
+      containerRegistry: 'dockerhubbhd'
+      repository: 'hugojch/dummybhd'
+      command: 'buildAndPush'
+      Dockerfile: '$(BuildDocker)'
+
+  - task: Kubernetes@1
+    displayName: 'kubectl apply'
+    inputs:
+      connectionType: 'Azure Resource Manager'
+      azureSubscriptionEndpoint: 'Azure subscription 1 (2425ea5f-0d55-41ea-88e1-a4ce15a6702c)'
+      azureResourceGroup: 'rg-dummy-bhd'
+      kubernetesCluster: 'kubebhd'
+      namespace: 'default'
+      command: 'apply'
+      useConfigurationFile: true
+      configuration: 'Yaml8k'
+      secretType: 'dockerRegistry'
+      containerRegistryType: 'Azure Container Registry'
+      azureSubscriptionEndpointForSecrets: 'Azure subscription 1 (2425ea5f-0d55-41ea-88e1-a4ce15a6702c)'
+      azureContainerRegistry: 'bhdcontkube.azurecr.io'
+
+- job: Job_Paralelo
+  displayName: 'Compilación Scripts'
+  pool:
+    name: DUMMY-SERVER
+    demands:
+    - agent.name -equals DUMMY-SERVER-DEVOPS
+  steps:
+  - task: PowerShell@2
+    displayName: 'Hola Mundo'
+    inputs:
+      targetType: 'inline'
+      script: |
+        $i = 1
+        do {
+            "Hola Mundo"
+            $i++
+        } while ($i -le 10)
+
+  - task: PowerShell@2
+    displayName: 'Crear Archivos'
+    inputs:
+      targetType: 'inline'
+      script: |
+        # Ruta de la carpeta
+        $carpeta = "C:\DummyBHL\Archivos"
+      
+        if (-not (Test-Path -Path $carpeta -PathType Container)) {
+            New-Item -ItemType Directory -Path $carpeta
+            Write-Host "Carpeta creada."
+        } else {
+            Write-Host "La carpeta ya existe."
+        }
+      
+        # Obtener la fecha actual en un formato específico (por ejemplo, YYYY-MM-DD).
+        $fecha = Get-Date -Format "yyyy-MM-dd"
+      
+        # Ruta donde se crearán los archivos. Cambia la ruta a tu preferencia.
+        $ruta = $carpeta
+      
+        # Bucle para crear 10 archivos con nombres basados en la fecha.
+        for ($i = 1; $i -le 10; $i++) {
+            $nombreArchivo = "Archivo$i-$fecha.txt"
+            $rutaCompleta = Join-Path -Path $ruta -ChildPath $nombreArchivo
+      
+            New-Item -Path $rutaCompleta -ItemType File -Force
+            Write-Host "Se ha creado o sobrescrito el archivo $nombreArchivo"
+        }
